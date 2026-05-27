@@ -489,7 +489,6 @@ export default function WorkflowApp() {
       try {
         // Check for new project system first
         const savedAppState = localStorage.getItem('nexus-app-state');
-        const savedActiveProject = localStorage.getItem('nexus-active-project');
 
         if (savedAppState) {
           // Load from new project system
@@ -515,11 +514,13 @@ export default function WorkflowApp() {
             }
 
             setProjects(migratedProjects);
-            const activeId = savedActiveProject || migratedProjects[0].id;
-            setActiveProjectId(activeId);
-            const activeProj = migratedProjects.find(p => p.id === activeId) || migratedProjects[0];
+            // SECURITY: Always load the default (first) project on page load.
+            // Never restore the last-active project from localStorage on fresh load,
+            // as that would reveal the secret project to anyone who opens/refreshes the page.
+            const defaultProj = migratedProjects[0];
+            setActiveProjectId(defaultProj.id);
             
-            let initialWorkspaces = activeProj.workspaces || defaultWorkspaces;
+            let initialWorkspaces = defaultProj.workspaces || defaultWorkspaces;
             initialWorkspaces = initialWorkspaces.map(ws => {
               const grps = ws.groups || [];
               const nds = ws.nodes || [];
@@ -527,20 +528,18 @@ export default function WorkflowApp() {
             });
             
             setWorkspaces(initialWorkspaces);
-            setActiveTab(activeProj.activeTab || (initialWorkspaces.length > 0 ? initialWorkspaces[0].id : ''));
-            setNextId(activeProj.nextId || 10);
+            setActiveTab(defaultProj.activeTab || (initialWorkspaces.length > 0 ? initialWorkspaces[0].id : ''));
+            setNextId(defaultProj.nextId || 10);
             
-            // Default (first) project is always password-free
-            const isDefaultProject = activeProj.id === migratedProjects[0].id;
-            if (!isDefaultProject && activeProj.password) {
-              setPasswordEnabled(true);
-              setStoredPassword(activeProj.password);
-            }
+            // Default project is always password-free - no need to enable password gate
             // Strip password from default project in storage if present
             if (migratedProjects[0].password) {
               migratedProjects[0] = { ...migratedProjects[0], password: '' };
               localStorage.setItem('nexus-app-state', JSON.stringify(migratedProjects));
             }
+            // SECURITY: Reset localStorage active-project to default on load,
+            // so inspecting storage also won't reveal which project was last used
+            localStorage.setItem('nexus-active-project', defaultProj.id);
           }
         } else {
           // Migration from old localStorage keys
