@@ -674,10 +674,10 @@ export default function WorkflowApp() {
     setFocusedNodeId(null);
   }, [activeTab]);
 
-  // --- Secret Keyboard Shortcuts (Ctrl+Shift+P toggle, Ctrl+Shift+/ boss key, Escape dismiss, Panic shortcuts) ---
+  // --- Secret Keyboard Shortcuts (Ctrl+Shift+K toggle, Ctrl+Shift+/ boss key, Escape dismiss, Panic shortcuts) ---
   useEffect(() => {
     const handleSecretKey = (e) => {
-      if (e.ctrlKey && e.shiftKey && e.key === 'P') {
+      if (e.ctrlKey && e.shiftKey && e.key === 'K') {
         e.preventDefault();
         setShowProjectPanel(prev => {
           if (prev) return false;
