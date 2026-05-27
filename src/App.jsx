@@ -6,7 +6,7 @@ import {
   Sparkles, CheckSquare, Clock, AlertCircle, BarChart2, PanelLeftClose, PanelLeft,
   Grid, Move, Copy, ArrowUp, ArrowDown, RefreshCw, LayoutList, MonitorSpeaker,
   MoreVertical, ImageIcon, ChevronUp, Scissors, ClipboardPaste, Minimize2, Maximize2,
-  Lock, Shield, Eye, EyeOff, GitBranch
+  Lock, Shield, Eye, EyeOff, GitBranch, Home, Edit3
 } from 'lucide-react';
 
 // --- Premium Color Themes ---
@@ -361,6 +361,18 @@ export default function WorkflowApp() {
   const saveTimerRef = useRef(null);
   const projectsRef = useRef([]);
 
+  // --- Dashboard View ---
+  const [showDashboard, setShowDashboard] = useState(true);
+  const [dashboardKebabOpen, setDashboardKebabOpen] = useState(null);
+  const [showDashboardModal, setShowDashboardModal] = useState(false);
+  const [dashboardModalMode, setDashboardModalMode] = useState('create'); // 'create' or 'edit'
+  const [editingProjectId, setEditingProjectId] = useState(null);
+  const [dashboardNameInput, setDashboardNameInput] = useState('');
+  const [dashboardPasswordInput, setDashboardPasswordInput] = useState('');
+  const [dashboardSetDefault, setDashboardSetDefault] = useState(false);
+  const [dashboardModalError, setDashboardModalError] = useState('');
+  const lastEscapeRef = useRef(0);
+
   // --- Touch Gesture Refs (Pinch-to-Zoom) ---
   const touchRef = useRef({ isPinching: false, lastDist: 0, lastMidX: 0, lastMidY: 0 });
   const nodeTapRef = useRef(null);
@@ -477,7 +489,6 @@ export default function WorkflowApp() {
       try {
         // Check for new project system first
         const savedAppState = localStorage.getItem('nexus-app-state');
-        const savedActiveProject = localStorage.getItem('nexus-active-project');
 
         if (savedAppState) {
           // Load from new project system
@@ -486,22 +497,30 @@ export default function WorkflowApp() {
             // Migrate any unhashed passwords (short strings that are not 64-char hex)
             let needsSave = false;
             const migratedProjects = await Promise.all(parsedProjects.map(async (p) => {
+              let updated = p;
               if (p.password && !/^[a-f0-9]{64}$/.test(p.password)) {
                 needsSave = true;
-                return { ...p, password: await hashPassword(p.password) };
+                updated = { ...updated, password: await hashPassword(p.password) };
               }
-              return p;
+              // Add lastModified if missing
+              if (!updated.lastModified) {
+                needsSave = true;
+                updated = { ...updated, lastModified: Date.now() };
+              }
+              return updated;
             }));
             if (needsSave) {
               localStorage.setItem('nexus-app-state', JSON.stringify(migratedProjects));
             }
 
             setProjects(migratedProjects);
-            const activeId = savedActiveProject || migratedProjects[0].id;
-            setActiveProjectId(activeId);
-            const activeProj = migratedProjects.find(p => p.id === activeId) || migratedProjects[0];
+            // SECURITY: Always load the default (first) project on page load.
+            // Never restore the last-active project from localStorage on fresh load,
+            // as that would reveal the secret project to anyone who opens/refreshes the page.
+            const defaultProj = migratedProjects[0];
+            setActiveProjectId(defaultProj.id);
             
-            let initialWorkspaces = activeProj.workspaces || defaultWorkspaces;
+            let initialWorkspaces = defaultProj.workspaces || defaultWorkspaces;
             initialWorkspaces = initialWorkspaces.map(ws => {
               const grps = ws.groups || [];
               const nds = ws.nodes || [];
@@ -509,20 +528,18 @@ export default function WorkflowApp() {
             });
             
             setWorkspaces(initialWorkspaces);
-            setActiveTab(activeProj.activeTab || (initialWorkspaces.length > 0 ? initialWorkspaces[0].id : ''));
-            setNextId(activeProj.nextId || 10);
+            setActiveTab(defaultProj.activeTab || (initialWorkspaces.length > 0 ? initialWorkspaces[0].id : ''));
+            setNextId(defaultProj.nextId || 10);
             
-            // Default (first) project is always password-free
-            const isDefaultProject = activeProj.id === migratedProjects[0].id;
-            if (!isDefaultProject && activeProj.password) {
-              setPasswordEnabled(true);
-              setStoredPassword(activeProj.password);
-            }
+            // Default project is always password-free - no need to enable password gate
             // Strip password from default project in storage if present
             if (migratedProjects[0].password) {
               migratedProjects[0] = { ...migratedProjects[0], password: '' };
               localStorage.setItem('nexus-app-state', JSON.stringify(migratedProjects));
             }
+            // SECURITY: Reset localStorage active-project to default on load,
+            // so inspecting storage also won't reveal which project was last used
+            localStorage.setItem('nexus-active-project', defaultProj.id);
           }
         } else {
           // Migration from old localStorage keys
@@ -557,6 +574,7 @@ export default function WorkflowApp() {
             id: 'proj-default',
             name: 'Default',
             password: '',
+            lastModified: Date.now(),
             workspaces: initialWorkspaces,
             activeTab: initialTab,
             nextId: initialNextId
@@ -582,6 +600,7 @@ export default function WorkflowApp() {
           id: 'proj-default',
           name: 'Default',
           password: '',
+          lastModified: Date.now(),
           workspaces: defaultWorkspaces,
           activeTab: 'ws-1',
           nextId: 10
@@ -654,7 +673,7 @@ export default function WorkflowApp() {
     setFocusedNodeId(null);
   }, [activeTab]);
 
-  // --- Secret Keyboard Shortcuts (Ctrl+Shift+K toggle, Ctrl+Shift+/ boss key, Escape dismiss) ---
+  // --- Secret Keyboard Shortcuts (Ctrl+Shift+K toggle, Ctrl+Shift+/ boss key, Escape dismiss, Panic shortcuts) ---
   useEffect(() => {
     const handleSecretKey = (e) => {
       if (e.ctrlKey && e.shiftKey && e.key === 'K') {
@@ -676,19 +695,60 @@ export default function WorkflowApp() {
         const currentProjects = projectsRef.current;
         if (currentProjects.length > 0) {
           const defaultProjectId = currentProjects[0].id;
-          // Only switch if not already on the default project
           if (activeProjectId !== defaultProjectId) {
             cycleToProject(defaultProjectId);
           }
         }
       }
-      if (e.key === 'Escape' && showProjectPanel) {
-        setShowProjectPanel(false);
+      // Alt+Shift+X - panic quick-switch to default project
+      if (e.altKey && e.shiftKey && e.key === 'X') {
+        e.preventDefault();
+        const currentProjects = projectsRef.current;
+        if (currentProjects.length > 0) {
+          const defaultProjectId = currentProjects[0].id;
+          cycleToProject(defaultProjectId);
+          setShowDashboard(false);
+        }
+      }
+      // Ctrl+Alt+D - panic quick-switch to default project
+      if (e.ctrlKey && e.altKey && (e.key === 'd' || e.key === 'D')) {
+        e.preventDefault();
+        const currentProjects = projectsRef.current;
+        if (currentProjects.length > 0) {
+          const defaultProjectId = currentProjects[0].id;
+          cycleToProject(defaultProjectId);
+          setShowDashboard(false);
+        }
+      }
+      // Double-tap Escape - panic quick-switch to default project
+      if (e.key === 'Escape') {
+        const now = Date.now();
+        if (now - lastEscapeRef.current < 500) {
+          // Double-tap detected
+          e.preventDefault();
+          const currentProjects = projectsRef.current;
+          if (currentProjects.length > 0) {
+            const defaultProjectId = currentProjects[0].id;
+            cycleToProject(defaultProjectId);
+            setShowDashboard(false);
+          }
+          lastEscapeRef.current = 0;
+        } else {
+          lastEscapeRef.current = now;
+          // Single escape still dismisses project panel
+          if (showProjectPanel) {
+            setShowProjectPanel(false);
+          }
+          // Close dashboard modal
+          if (showDashboardModal) {
+            setShowDashboardModal(false);
+          }
+        }
       }
     };
     window.addEventListener('keydown', handleSecretKey);
     return () => window.removeEventListener('keydown', handleSecretKey);
-  }, [showProjectPanel, activeProjectId]);
+  }, [showProjectPanel, activeProjectId, showDashboardModal]);
 
   // --- Auto-hide sidebar on small screens ---
   useEffect(() => {
@@ -714,7 +774,11 @@ export default function WorkflowApp() {
   const takeSnapshot = useCallback(() => {
     const newPast = [...pastRef.current, JSON.parse(JSON.stringify(stateRef.current))];
     updateHistory(newPast, []);
-  }, [updateHistory]);
+    // Update lastModified only on intentional user actions
+    if (activeProjectId) {
+      setProjects(prev => prev.map(p => p.id === activeProjectId ? { ...p, lastModified: Date.now() } : p));
+    }
+  }, [updateHistory, activeProjectId]);
 
   const performUndo = useCallback(() => {
     if (pastRef.current.length === 0) return;
@@ -1140,6 +1204,7 @@ export default function WorkflowApp() {
       id: `proj-${Date.now()}`,
       name: projectNameInput.trim(),
       password: hashedPass,
+      lastModified: Date.now(),
       workspaces: [{ id: wsId, name: 'Workspace 1', nodes: [], edges: [], groups: [] }],
       activeTab: wsId,
       nextId: 10
@@ -1349,7 +1414,7 @@ export default function WorkflowApp() {
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 100);
   };
 
   const handleImport = (e) => {
@@ -2510,6 +2575,203 @@ export default function WorkflowApp() {
     </div>
   );
 
+  // --- Dashboard Functions ---
+  const openProjectFromDashboard = (projectId) => {
+    const target = projects.find(p => p.id === projectId);
+    if (!target) return;
+    const isDefault = projects.indexOf(target) === 0;
+    if (!isDefault && target.password) {
+      // Password-protected project: load it and let the gate handle auth
+      let targetWorkspaces = target.workspaces || defaultWorkspaces;
+      targetWorkspaces = targetWorkspaces.map(ws => {
+        const grps = ws.groups || [];
+        const nds = ws.nodes || [];
+        return { ...ws, groups: computeLayout(grps, nds), nodes: nds, edges: ws.edges || [] };
+      });
+      setActiveProjectId(projectId);
+      setWorkspaces(targetWorkspaces);
+      setActiveTab(target.activeTab || (targetWorkspaces.length > 0 ? targetWorkspaces[0].id : ''));
+      setNextId(target.nextId || 10);
+      setStoredPassword(target.password || '');
+      setPasswordEnabled(true);
+      setIsAuthenticated(false);
+      localStorage.setItem('nexus-active-project', projectId);
+      setShowDashboard(false);
+      setTransform({ x: 0, y: 0, scale: 1 });
+      pastRef.current = [];
+      futureRef.current = [];
+      setCanUndo(false);
+      setCanRedo(false);
+    } else {
+      // Passwordless project: open directly
+      cycleToProject(projectId);
+      setShowDashboard(false);
+    }
+  };
+
+  const openDashboardCreateModal = () => {
+    setDashboardModalMode('create');
+    setEditingProjectId(null);
+    setDashboardNameInput('');
+    setDashboardPasswordInput('');
+    setDashboardSetDefault(false);
+    setDashboardModalError('');
+    setShowDashboardModal(true);
+  };
+
+  const openDashboardEditModal = (projectId) => {
+    const proj = projects.find(p => p.id === projectId);
+    if (!proj) return;
+    setDashboardModalMode('edit');
+    setEditingProjectId(projectId);
+    setDashboardNameInput(proj.name);
+    setDashboardPasswordInput('');
+    setDashboardSetDefault(projects.indexOf(proj) === 0);
+    setDashboardModalError('');
+    setShowDashboardModal(true);
+    setDashboardKebabOpen(null);
+  };
+
+  const handleDashboardModalSave = async () => {
+    if (!dashboardNameInput.trim()) {
+      setDashboardModalError('Project name is required.');
+      return;
+    }
+    if (dashboardModalMode === 'create') {
+      const nameExists = projects.some(p => p.name.toLowerCase() === dashboardNameInput.trim().toLowerCase());
+      if (nameExists) {
+        setDashboardModalError('A project with this name already exists.');
+        return;
+      }
+      const wsId = `ws-${Date.now()}`;
+      const hashedPass = dashboardPasswordInput.trim() ? await hashPassword(dashboardPasswordInput.trim()) : '';
+      const newProj = {
+        id: `proj-${Date.now()}`,
+        name: dashboardNameInput.trim(),
+        password: hashedPass,
+        lastModified: Date.now(),
+        workspaces: [{ id: wsId, name: 'Workspace 1', nodes: [], edges: [], groups: [] }],
+        activeTab: wsId,
+        nextId: 10
+      };
+      setProjects(prev => {
+        let updated;
+        if (dashboardSetDefault) {
+          // Remove password from new default since default is always password-free
+          const cleanProj = { ...newProj, password: '' };
+          updated = [cleanProj, ...prev];
+        } else {
+          updated = [...prev, newProj];
+        }
+        localStorage.setItem('nexus-app-state', JSON.stringify(updated));
+        return updated;
+      });
+    } else {
+      // Edit mode
+      const nameExists = projects.some(p => p.id !== editingProjectId && p.name.toLowerCase() === dashboardNameInput.trim().toLowerCase());
+      if (nameExists) {
+        setDashboardModalError('A project with this name already exists.');
+        return;
+      }
+      const hashedPass = dashboardPasswordInput.trim() ? await hashPassword(dashboardPasswordInput.trim()) : null;
+      setProjects(prev => {
+        let updated = prev.map(p => {
+          if (p.id === editingProjectId) {
+            const updatedProj = { ...p, name: dashboardNameInput.trim(), lastModified: Date.now() };
+            if (hashedPass) {
+              updatedProj.password = hashedPass;
+            }
+            return updatedProj;
+          }
+          return p;
+        });
+        if (dashboardSetDefault) {
+          const targetIdx = updated.findIndex(p => p.id === editingProjectId);
+          if (targetIdx > 0) {
+            const [target] = updated.splice(targetIdx, 1);
+            // Default project is always password-free
+            target.password = '';
+            updated = [target, ...updated];
+          }
+        }
+        localStorage.setItem('nexus-app-state', JSON.stringify(updated));
+        return updated;
+      });
+    }
+    setShowDashboardModal(false);
+    setDashboardModalError('');
+  };
+
+  const duplicateProject = (projectId) => {
+    const source = projects.find(p => p.id === projectId);
+    if (!source) return;
+    const newProj = {
+      ...JSON.parse(JSON.stringify(source)),
+      id: `proj-${Date.now()}`,
+      name: `${source.name} (Copy)`,
+      lastModified: Date.now(),
+      password: ''
+    };
+    setProjects(prev => {
+      const updated = [...prev, newProj];
+      localStorage.setItem('nexus-app-state', JSON.stringify(updated));
+      return updated;
+    });
+    setDashboardKebabOpen(null);
+  };
+
+  const exportProject = (projectId) => {
+    const proj = projects.find(p => p.id === projectId);
+    if (!proj) return;
+    const data = { workspaces: proj.workspaces, activeTab: proj.activeTab, nextId: proj.nextId };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${proj.name.replace(/[^a-zA-Z0-9]/g, '-')}-${new Date().toISOString().slice(0,10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 100);
+    setDashboardKebabOpen(null);
+  };
+
+  const deleteProjectFromDashboard = (projectId) => {
+    if (projectsRef.current.length <= 1) return;
+    // Cannot delete the default (first) project
+    const targetIdx = projectsRef.current.findIndex(p => p.id === projectId);
+    if (targetIdx === 0) return;
+    setProjects(prev => {
+      const updated = prev.filter(p => p.id !== projectId);
+      localStorage.setItem('nexus-app-state', JSON.stringify(updated));
+      return updated;
+    });
+    if (projectId === activeProjectId) {
+      const remaining = projectsRef.current.filter(p => p.id !== projectId);
+      if (remaining.length > 0) {
+        cycleToProject(remaining[0].id);
+      }
+    }
+    setDashboardKebabOpen(null);
+  };
+
+  const formatLastModified = (timestamp) => {
+    if (!timestamp) return 'Never';
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffMs = now - date;
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined });
+  };
+
+  const projectCardColors = ['bg-indigo-500', 'bg-emerald-500', 'bg-amber-500', 'bg-purple-500', 'bg-rose-500', 'bg-blue-500', 'bg-teal-500', 'bg-orange-500'];
+
   const renderProjectPanel = (isGate = false) => {
     const zBg = isGate ? 'z-[10000]' : 'z-[9998]';
     const zContent = isGate ? 'z-[10001]' : 'z-[9999]';
@@ -2722,7 +2984,7 @@ export default function WorkflowApp() {
     );
   };
 
-  if (passwordEnabled && !isAuthenticated) {
+  if (passwordEnabled && !isAuthenticated && !showDashboard) {
     return (
       <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm">
         <div className="bg-white rounded-2xl shadow-xl border border-slate-200 p-8 w-full max-w-sm mx-4">
@@ -2777,12 +3039,231 @@ export default function WorkflowApp() {
     );
   }
 
+  // --- Dashboard View ---
+  if (showDashboard) {
+    return (
+      <div className="flex flex-col h-screen w-full bg-gray-50 font-sans text-slate-800 selection:bg-indigo-100 overflow-hidden">
+        {/* Dashboard Top Bar */}
+        <header className="h-16 bg-white border-b border-slate-200/80 flex items-center px-6 shadow-sm z-50 justify-between shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 bg-gradient-to-br from-indigo-600 to-indigo-800 rounded-xl text-white shadow-md shadow-indigo-100">
+              <Network className="w-5 h-5" />
+            </div>
+            <div>
+              <h1 className="text-lg font-bold text-slate-800">Nexus Workflow</h1>
+              <p className="text-xs text-slate-400">Your projects</p>
+            </div>
+          </div>
+          <button
+            onClick={openDashboardCreateModal}
+            className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white font-semibold text-sm rounded-xl shadow-md shadow-indigo-200 transition-all hover:shadow-lg hover:shadow-indigo-200"
+          >
+            <Plus className="w-4 h-4" />
+            New Project
+          </button>
+        </header>
+
+        {/* Dashboard Grid */}
+        <div className="flex-1 overflow-y-auto p-6 sm:p-8">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+            {/* New Project Card */}
+            <button
+              onClick={openDashboardCreateModal}
+              className="group flex flex-col items-center justify-center min-h-[200px] rounded-2xl border-2 border-dashed border-slate-300 hover:border-indigo-400 bg-white/50 hover:bg-indigo-50/50 transition-all duration-200 cursor-pointer"
+            >
+              <div className="p-4 rounded-2xl bg-slate-100 group-hover:bg-indigo-100 transition-colors mb-3">
+                <Plus className="w-7 h-7 text-slate-400 group-hover:text-indigo-600 transition-colors" />
+              </div>
+              <span className="text-sm font-semibold text-slate-500 group-hover:text-indigo-600 transition-colors">New Project</span>
+            </button>
+
+            {/* Project Cards */}
+            {projects.map((proj, idx) => {
+              const colorClass = projectCardColors[idx % projectCardColors.length];
+              const isDefault = idx === 0;
+              return (
+                <div
+                  key={proj.id}
+                  className="group relative flex flex-col min-h-[200px] rounded-2xl bg-white border border-slate-200 shadow-sm hover:shadow-lg hover:border-slate-300 transition-all duration-200 cursor-pointer overflow-hidden"
+                  onClick={() => openProjectFromDashboard(proj.id)}
+                >
+                  {/* Card Color Header */}
+                  <div className={`h-2 w-full ${colorClass}`} />
+                  
+                  {/* Kebab Menu Button */}
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setDashboardKebabOpen(dashboardKebabOpen === proj.id ? null : proj.id); }}
+                    className="absolute top-4 right-3 p-1.5 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-all z-10"
+                  >
+                    <MoreVertical className="w-4 h-4" />
+                  </button>
+
+                  {/* Kebab Dropdown */}
+                  {dashboardKebabOpen === proj.id && (
+                    <>
+                      <div className="fixed inset-0 z-[98]" onClick={(e) => { e.stopPropagation(); setDashboardKebabOpen(null); }} />
+                      <div className="absolute top-10 right-3 w-44 bg-white rounded-xl shadow-xl border border-slate-200 py-1.5 z-[99]" onClick={(e) => e.stopPropagation()}>
+                        <button onClick={() => { openProjectFromDashboard(proj.id); setDashboardKebabOpen(null); }} className="w-full flex items-center px-3.5 py-2 text-sm text-slate-700 hover:bg-slate-50 transition-colors gap-2.5">
+                          <FolderOpen className="w-4 h-4 text-slate-400" /> Open Project
+                        </button>
+                        <button onClick={() => openDashboardEditModal(proj.id)} className="w-full flex items-center px-3.5 py-2 text-sm text-slate-700 hover:bg-slate-50 transition-colors gap-2.5">
+                          <Edit3 className="w-4 h-4 text-slate-400" /> Edit Project
+                        </button>
+                        <button onClick={() => duplicateProject(proj.id)} className="w-full flex items-center px-3.5 py-2 text-sm text-slate-700 hover:bg-slate-50 transition-colors gap-2.5">
+                          <Copy className="w-4 h-4 text-slate-400" /> Duplicate
+                        </button>
+                        <button onClick={() => exportProject(proj.id)} className="w-full flex items-center px-3.5 py-2 text-sm text-slate-700 hover:bg-slate-50 transition-colors gap-2.5">
+                          <Download className="w-4 h-4 text-slate-400" /> Export
+                        </button>
+                        {!isDefault && (
+                          <>
+                            <div className="my-1 border-t border-slate-100" />
+                            <button onClick={() => deleteProjectFromDashboard(proj.id)} className="w-full flex items-center px-3.5 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors gap-2.5">
+                              <Trash2 className="w-4 h-4 text-red-400" /> Delete
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </>
+                  )}
+
+                  {/* Card Body */}
+                  <div className="flex-1 p-4 flex flex-col">
+                    {/* Icon/Thumbnail */}
+                    <div className={`w-11 h-11 rounded-xl ${colorClass} flex items-center justify-center text-white font-bold text-lg mb-3 shadow-sm`}>
+                      {proj.name.charAt(0).toUpperCase()}
+                    </div>
+                    
+                    {/* Project Name */}
+                    <h3 className="font-semibold text-slate-800 text-sm mb-1 truncate">{proj.name}</h3>
+                    
+                    {/* Badges */}
+                    <div className="flex items-center gap-2 mb-3">
+                      {isDefault && (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-600 border border-indigo-200">Default</span>
+                      )}
+                      {proj.password && (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-200 flex items-center gap-1">
+                          <Lock className="w-2.5 h-2.5" /> Protected
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Last Modified */}
+                    <div className="mt-auto flex items-center gap-1.5 text-xs text-slate-400">
+                      <Clock className="w-3 h-3" />
+                      <span>{formatLastModified(proj.lastModified)}</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Dashboard Modal (New / Edit Project) */}
+        {showDashboardModal && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center">
+            <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm transition-opacity" onClick={() => setShowDashboardModal(false)} />
+            <div className="relative bg-white rounded-2xl shadow-2xl border border-slate-200 p-6 w-full max-w-md mx-4 transform transition-all">
+              {/* Modal Header */}
+              <div className="flex items-center justify-between mb-5">
+                <h2 className="text-lg font-bold text-slate-800">
+                  {dashboardModalMode === 'create' ? 'New Project' : 'Edit Project'}
+                </h2>
+                <button onClick={() => setShowDashboardModal(false)} className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 transition-colors">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Name Field */}
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-slate-700 mb-1.5">Project Name</label>
+                <input
+                  type="text"
+                  value={dashboardNameInput}
+                  onChange={(e) => setDashboardNameInput(e.target.value)}
+                  placeholder="Enter project name"
+                  className="w-full px-4 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  autoFocus
+                />
+              </div>
+
+              {/* Password Field */}
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                  Password <span className="text-slate-400 font-normal">(optional)</span>
+                </label>
+                <input
+                  type="password"
+                  value={dashboardPasswordInput}
+                  onChange={(e) => setDashboardPasswordInput(e.target.value)}
+                  placeholder={dashboardModalMode === 'edit' ? 'Leave blank to keep current' : 'Set a password'}
+                  className="w-full px-4 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                />
+              </div>
+
+              {/* Set as Default Toggle */}
+              <div className="mb-5 flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-200">
+                <div>
+                  <p className="text-sm font-medium text-slate-700">Set as Default Project</p>
+                  <p className="text-xs text-slate-400 mt-0.5">Fallback for quick-switch (no password)</p>
+                </div>
+                <button
+                  onClick={() => setDashboardSetDefault(!dashboardSetDefault)}
+                  className={`relative w-11 h-6 rounded-full transition-colors ${dashboardSetDefault ? 'bg-indigo-600' : 'bg-slate-300'}`}
+                >
+                  <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${dashboardSetDefault ? 'translate-x-5' : 'translate-x-0'}`} />
+                </button>
+              </div>
+              {dashboardSetDefault && (dashboardPasswordInput.trim() || (dashboardModalMode === 'edit' && projects.find(p => p.id === editingProjectId)?.password)) && (
+                <p className="text-xs text-amber-600 mb-4 -mt-3 px-1">Warning: Setting as default will remove the password from this project.</p>
+              )}
+
+              {/* Error */}
+              {dashboardModalError && (
+                <p className="text-xs text-red-500 mb-4">{dashboardModalError}</p>
+              )}
+
+              {/* Actions */}
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowDashboardModal(false)}
+                  className="flex-1 py-2.5 border border-slate-200 text-slate-600 font-semibold text-sm rounded-xl hover:bg-slate-50 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDashboardModalSave}
+                  className="flex-1 py-2.5 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white font-semibold text-sm rounded-xl shadow-md transition-all"
+                >
+                  {dashboardModalMode === 'create' ? 'Create' : 'Save Changes'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Secret Project Panel */}
+        {showProjectPanel && renderProjectPanel(false)}
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-screen w-full bg-[#f8fafc] font-sans text-slate-800 selection:bg-indigo-100 overflow-hidden">
       
       {/* --- Top Command Toolbar --- */}
       <header className="h-14 sm:h-16 bg-white border-b border-slate-200/80 flex items-center px-2 sm:px-4 md:px-6 shadow-sm z-50 justify-between shrink-0 gap-1 sm:gap-2">
         <div className="flex items-center gap-1.5 sm:gap-3 min-w-0 flex-1">
+          <button 
+            onClick={() => setShowDashboard(true)}
+            className="p-1.5 hover:bg-indigo-50 rounded-lg text-slate-500 hover:text-indigo-600 transition-colors shrink-0"
+            title="Back to Dashboard"
+          >
+            <Home className="w-5 h-5" />
+          </button>
+
           <button 
             onClick={() => setShowSidebar(!showSidebar)}
             className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-500 transition-colors shrink-0"

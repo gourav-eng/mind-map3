@@ -1,0 +1,34 @@
+{
+  "id": "FEAT-001",
+  "type": "feat",
+  "description": "Transform the app to show a dashboard home screen with a project grid (like Canva/Adobe), kebab menus on each project card, and New Project / Edit Project modals. Also add a 'Set as Default Project' toggle in the project creation/edit flow and implement a panic keyboard shortcut (double-tap Escape) to instantly switch to the default project.",
+  "status": "completed",
+  "steps": [
+    "Step 1 - Add a 'showDashboard' state (default: true) to WorkflowApp in src/App.jsx. When showDashboard is true, render the dashboard view INSTEAD of the existing canvas/header/sidebar layout. The dashboard should have: a top bar with app branding and a prominent 'New Project' button at top-right, and below it a responsive grid of project cards.",
+    "Step 2 - Each project card in the grid should display: project name, a colored icon/thumbnail (use the first letter or a folder icon from lucide-react), last modified date (add a 'lastModified' field to project objects, defaulting to Date.now()), and a 3-dot (MoreVertical icon) kebab menu button in the top-right corner of the card.",
+    "Step 3 - Clicking the kebab menu on a project card should open a small dropdown with options: 'Open Project', 'Edit Project', 'Duplicate', 'Export', 'Delete'. The first card in the grid (or a special '+' card) should be the 'New Project' action card.",
+    "Step 4 - Clicking 'New Project' or 'Edit Project' should open a centered modal overlay that dims the background. The modal should contain fields for: project name, optional password/key, and a toggle switch labeled 'Set as Default Project (Fallback for quick-switch)'. When this toggle is turned on for a project, it becomes the new default (move it to index 0 in the projects array). Only one project can be default at a time.",
+    "Step 5 - When a project is opened (by clicking 'Open Project' in kebab menu, or clicking the card body, or double-clicking the card), set showDashboard to false and load that project into the workspace. Add a 'Back to Dashboard' button or home icon in the existing header toolbar that sets showDashboard back to true.",
+    "Step 6 - Implement the panic/quick-switch shortcut using double-tap Escape. Track the last Escape keydown timestamp; if two Escape presses occur within 500ms, instantly save the current project state and switch to the default project (index 0) using the existing cycleToProject() function. This replaces or supplements the existing Ctrl+Shift+/ boss key. Also support Alt+Shift+X and Ctrl+Alt+D as alternative triggers for the same quick-switch behavior.",
+    "Step 7 - Update the localStorage persistence: when saving projects, include the 'lastModified' timestamp and the 'isDefault' marker. Ensure the default project is always at index 0. On initialization, if no projects exist, create a default project. If migrating from old data, mark the first project as default.",
+    "Step 8 - Style the dashboard to look professional and modern: use a light background (bg-slate-50 or bg-gray-50), cards with subtle shadows and rounded corners, hover effects on cards, smooth transitions on modal open/close. The 'New Project' button should be indigo/blue gradient."
+  ],
+  "acceptance_criteria": [
+    "On app load, the dashboard view is displayed showing a grid of project cards (or the single default project if only one exists)",
+    "Each project card shows its name, a visual indicator, last modified date, and a 3-dot kebab menu",
+    "The kebab menu dropdown provides Open, Edit, Duplicate, Export, Delete actions",
+    "Clicking 'New Project' opens a centered modal with name, password, and 'Set as Default' toggle",
+    "Clicking 'Edit Project' opens the same modal pre-filled with existing project data",
+    "Opening a project transitions from dashboard to the existing canvas/workspace view",
+    "A back/home button in the workspace header returns to the dashboard",
+    "Double-tapping Escape within 500ms triggers instant switch to the default project with no confirmation",
+    "Alt+Shift+X and Ctrl+Alt+D also trigger the panic quick-switch",
+    "The 'Set as Default' toggle correctly moves the selected project to index 0",
+    "npm run build completes without errors"
+  ],
+  "verification": [
+    "Run 'npm run build' in /projects/sandbox/mind-map3 and confirm it exits with code 0 and produces a dist/ folder"
+  ],
+  "blocked_reason": null,
+  "findings": "Implementation completed successfully. Build passes. Key decisions: (1) Password gate condition updated to include !showDashboard so dashboard always shows on load even if active project is password-protected. (2) Edit3 and Home icons added from lucide-react. (3) Panic shortcuts (double-Escape, Alt+Shift+X, Ctrl+Alt+D) all switch to default project AND set showDashboard=false so user lands in workspace view. (4) The _pendingPassword pattern was simplified to hash password before state update for cleaner code."
+}
