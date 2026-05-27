@@ -2,7 +2,7 @@
   "id": "FEAT-001",
   "type": "feat",
   "description": "Transform the app to show a dashboard home screen with a project grid (like Canva/Adobe), kebab menus on each project card, and New Project / Edit Project modals. Also add a 'Set as Default Project' toggle in the project creation/edit flow and implement a panic keyboard shortcut (double-tap Escape) to instantly switch to the default project.",
-  "status": "in_progress",
+  "status": "completed",
   "steps": [
     "Step 1 - Add a 'showDashboard' state (default: true) to WorkflowApp in src/App.jsx. When showDashboard is true, render the dashboard view INSTEAD of the existing canvas/header/sidebar layout. The dashboard should have: a top bar with app branding and a prominent 'New Project' button at top-right, and below it a responsive grid of project cards.",
     "Step 2 - Each project card in the grid should display: project name, a colored icon/thumbnail (use the first letter or a folder icon from lucide-react), last modified date (add a 'lastModified' field to project objects, defaulting to Date.now()), and a 3-dot (MoreVertical icon) kebab menu button in the top-right corner of the card.",
@@ -30,5 +30,5 @@
     "Run 'npm run build' in /projects/sandbox/mind-map3 and confirm it exits with code 0 and produces a dist/ folder"
   ],
   "blocked_reason": null,
-  "findings": ""
+  "findings": "Implementation completed successfully. Build passes. Key decisions: (1) Password gate condition updated to include !showDashboard so dashboard always shows on load even if active project is password-protected. (2) Edit3 and Home icons added from lucide-react. (3) Panic shortcuts (double-Escape, Alt+Shift+X, Ctrl+Alt+D) all switch to default project AND set showDashboard=false so user lands in workspace view. (4) The _pendingPassword pattern was simplified to hash password before state update for cleaner code."
 }
