@@ -630,7 +630,7 @@ export default function WorkflowApp() {
     if (initialized && activeProjectId) {
       setProjects(prev => {
         const updated = prev.map(p => p.id === activeProjectId 
-          ? { ...p, workspaces, activeTab, nextId, lastModified: Date.now() }
+          ? { ...p, workspaces, activeTab, nextId }
           : p
         );
         return updated;
@@ -775,7 +775,11 @@ export default function WorkflowApp() {
   const takeSnapshot = useCallback(() => {
     const newPast = [...pastRef.current, JSON.parse(JSON.stringify(stateRef.current))];
     updateHistory(newPast, []);
-  }, [updateHistory]);
+    // Update lastModified only on intentional user actions
+    if (activeProjectId) {
+      setProjects(prev => prev.map(p => p.id === activeProjectId ? { ...p, lastModified: Date.now() } : p));
+    }
+  }, [updateHistory, activeProjectId]);
 
   const performUndo = useCallback(() => {
     if (pastRef.current.length === 0) return;
@@ -1394,7 +1398,7 @@ export default function WorkflowApp() {
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 100);
   };
 
   const handleImport = (e) => {
@@ -2684,14 +2688,14 @@ export default function WorkflowApp() {
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 100);
     setDashboardKebabOpen(null);
   };
 
   const deleteProjectFromDashboard = (projectId) => {
-    if (projects.length <= 1) return;
+    if (projectsRef.current.length <= 1) return;
     // Cannot delete the default (first) project
-    const targetIdx = projects.findIndex(p => p.id === projectId);
+    const targetIdx = projectsRef.current.findIndex(p => p.id === projectId);
     if (targetIdx === 0) return;
     setProjects(prev => {
       const updated = prev.filter(p => p.id !== projectId);
@@ -2699,7 +2703,7 @@ export default function WorkflowApp() {
       return updated;
     });
     if (projectId === activeProjectId) {
-      const remaining = projects.filter(p => p.id !== projectId);
+      const remaining = projectsRef.current.filter(p => p.id !== projectId);
       if (remaining.length > 0) {
         cycleToProject(remaining[0].id);
       }
@@ -3197,6 +3201,9 @@ export default function WorkflowApp() {
                   <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${dashboardSetDefault ? 'translate-x-5' : 'translate-x-0'}`} />
                 </button>
               </div>
+              {dashboardSetDefault && (dashboardPasswordInput.trim() || (dashboardModalMode === 'edit' && projects.find(p => p.id === editingProjectId)?.password)) && (
+                <p className="text-xs text-amber-600 mb-4 -mt-3 px-1">Warning: Setting as default will remove the password from this project.</p>
+              )}
 
               {/* Error */}
               {dashboardModalError && (
