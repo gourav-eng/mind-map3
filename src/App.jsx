@@ -362,7 +362,7 @@ export default function WorkflowApp() {
   const projectsRef = useRef([]);
 
   // --- Dashboard View ---
-  const [showDashboard, setShowDashboard] = useState(true);
+  const [showDashboard, setShowDashboard] = useState(false);
   const [dashboardKebabOpen, setDashboardKebabOpen] = useState(null);
   const [showDashboardModal, setShowDashboardModal] = useState(false);
   const [dashboardModalMode, setDashboardModalMode] = useState('create'); // 'create' or 'edit'
